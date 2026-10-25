@@ -1,5 +1,4 @@
 
-%%writefile app.py
 import os
 import json
 import tempfile
@@ -8,27 +7,63 @@ import boto3
 import streamlit.components.v1 as components
 from Bio.PDB import PDBParser
 
-st.set_page_config(page_title="Protein Cloud Explorer", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="Protein Cloud Explorer",
+    page_icon="🧬",
+    layout="wide",
+)
+
 st.title("🧬 Protein Structure Cloud Explorer")
-st.caption("Amazon S3 • Protein structure storage • Interactive 3D visualization")
+st.caption(
+    "Amazon S3 • Protein structure storage • Interactive 3D visualization"
+)
 
 BUCKET = "protein-structure-project-2026-honey123"
 REGION = "eu-north-1"
 
+
+def get_aws_credential(name):
+    """Read credentials from Streamlit Secrets or environment variables."""
+    try:
+        value = st.secrets[name]
+        if value:
+            return value
+    except Exception:
+        pass
+
+    return os.environ.get(name)
+
+
 @st.cache_resource
 def get_s3():
+    access_key = get_aws_credential("AWS_ACCESS_KEY_ID")
+    secret_key = get_aws_credential("AWS_SECRET_ACCESS_KEY")
+
+    if not access_key or not secret_key:
+        st.error(
+            "AWS credentials are missing. Configure "
+            "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+            "in Streamlit Secrets or your environment."
+        )
+        st.stop()
+
     return boto3.client(
         "s3",
         region_name=REGION,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
     )
+
 
 try:
     s3 = get_s3()
-    result = s3.list_objects_v2(Bucket=BUCKET, Prefix="protein-structures/")
+    result = s3.list_objects_v2(
+        Bucket=BUCKET,
+        Prefix="protein-structures/",
+    )
     pdb_files = [
-        item["Key"] for item in result.get("Contents", [])
+        item["Key"]
+        for item in result.get("Contents", [])
         if item["Key"].lower().endswith(".pdb")
     ]
 except Exception as e:
@@ -36,24 +71,35 @@ except Exception as e:
     st.stop()
 
 if not pdb_files:
-    st.warning("No PDB files found under protein-structures/ in your S3 bucket.")
+    st.warning(
+        "No PDB files found under protein-structures/ in your S3 bucket."
+    )
     st.stop()
 
-selected_key = st.sidebar.selectbox("Select a protein structure", pdb_files)
+selected_key = st.sidebar.selectbox(
+    "Select a protein structure",
+    pdb_files,
+)
 
 if st.sidebar.button("Refresh file list"):
-    st.cache_data.clear()
     st.rerun()
 
 try:
-    response = s3.get_object(Bucket=BUCKET, Key=selected_key)
-    pdb_text = response["Body"].read().decode("utf-8", errors="replace")
+    response = s3.get_object(
+        Bucket=BUCKET,
+        Key=selected_key,
+    )
+    pdb_text = response["Body"].read().decode(
+        "utf-8",
+        errors="replace",
+    )
 except Exception as e:
     st.error(f"Could not download PDB: {type(e).__name__}: {e}")
     st.stop()
 
 atom_lines = [
-    line for line in pdb_text.splitlines()
+    line
+    for line in pdb_text.splitlines()
     if line.startswith(("ATOM  ", "HETATM"))
 ]
 
@@ -62,16 +108,23 @@ if not atom_lines:
     st.stop()
 
 temp_path = None
+
 try:
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".pdb", delete=False
+        mode="w",
+        suffix=".pdb",
+        delete=False,
     ) as temp:
         temp.write(pdb_text)
         temp_path = temp.name
 
-    structure = PDBParser(QUIET=True).get_structure("protein", temp_path)
+    structure = PDBParser(QUIET=True).get_structure(
+        "protein",
+        temp_path,
+    )
     atoms = list(structure.get_atoms())
     residues = list(structure.get_residues())
+
 finally:
     if temp_path and os.path.exists(temp_path):
         os.remove(temp_path)
@@ -85,23 +138,31 @@ st.subheader("Interactive 3D protein structure")
 st.write("Drag to rotate and use the mouse wheel or trackpad to zoom.")
 
 pdb_json = json.dumps(pdb_text)
+
 html = f"""
 <div id="viewer" style="width:100%;height:500px;"></div>
 <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
 <script>
 const pdbData = {pdb_json};
 const element = document.getElementById("viewer");
+
 if (window.$3Dmol) {{
-    const viewer = $3Dmol.createViewer(element, {{backgroundColor: "white"}});
+    const viewer = $3Dmol.createViewer(element, {{
+        backgroundColor: "white"
+    }});
     viewer.addModel(pdbData, "pdb");
-    viewer.setStyle({{}}, {{cartoon: {{color: "spectrum"}}}});
+    viewer.setStyle({{}}, {{
+        cartoon: {{color: "spectrum"}}
+    }});
     viewer.zoomTo();
     viewer.render();
 }} else {{
-    element.innerHTML = "3D viewer library did not load. Check your internet connection.";
+    element.innerHTML =
+        "3D viewer library did not load. Check your internet connection.";
 }}
 </script>
 """
+
 components.html(html, height=520, scrolling=False)
 
 st.subheader("PDB file details")
@@ -116,7 +177,10 @@ st.download_button(
 )
 
 with st.expander("Preview first 30 PDB lines"):
-    st.code("\n".join(pdb_text.splitlines()[:30]), language="text")
+    st.code(
+        "\n".join(pdb_text.splitlines()[:30]),
+        language="text",
+    )
 
 st.info(
     "Educational demonstration using a precomputed AlphaFold structure. "
